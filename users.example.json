@@ -1,0 +1,11 @@
+{
+  "reviewer_1": {
+    "password": "CHANGE_ME",
+    "local_dir": "./revisiones_reviewer_1",
+    "reviewed_dir": "./revisados",
+    "installations": ["site_a", "site_b"],
+    "ftp_user": "",
+    "ftp_pass": "",
+    "ftp_remote_dir": "/revision"
+  }
+}

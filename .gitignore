@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+users.json
+*.log
+revisiones_*/
+revisados/
+.ftp_progress.json
