@@ -19,21 +19,40 @@ Herramienta de escritorio (Tkinter) para **revisar, corregir y reetiquetar las c
 | `main.py` | Interfaz, acceso, descarga y editor de cajas |
 | `cav_relabel.py` | Puente con la base de datos: casos pendientes, descarga desde S3, marcado como reetiquetado |
 | `tour_log_parser.py` | Extrae sector → imagen → clase → caja del log de texto de un tour |
+| `security_utils.py` | Hash scrypt de contraseñas y validación de URLs |
 | `users.example.json` | Plantilla de usuarios (copiar a `users.json`, que no se versiona) |
 | `.env.example` | Variables de entorno (AWS, base de datos, FTP) |
 
 ## Instalación
 
 ```bash
-pip install boto3 pillow pymysql
+pip install -r requirements.txt   # boto3, Pillow, PyMySQL, imageio-ffmpeg
 cp .env.example .env              # y exporta las variables
 cp users.example.json users.json  # define usuarios, carpetas e instalaciones
+python security_utils.py          # genera el hash de la contraseña de cada revisor
 python main.py
 ```
 
-Ninguna credencial vive en el código: AWS, base de datos y FTP salen del entorno, y las contraseñas de los revisores, de `users.json` (en texto plano; pensado para uso interno).
+Ninguna credencial vive en el código: AWS, base de datos y FTP salen del entorno. Las contraseñas de los revisores se guardan en `users.json` como hash **scrypt** (`password_hash`), nunca en texto plano; el campo antiguo `password` se rechaza salvo que se active `ALLOW_PLAINTEXT_USERS=1` para migrar.
+
+## Seguridad
+
+- **FTPS por defecto** (`FTP_TLS` con canal de datos protegido). `FTP_INSECURE=1` desactiva el cifrado y solo es para servidores de pruebas.
+- Los enlaces de vídeo solo se abren si son `https`.
+- Sin instalaciones asignadas, el revisor no consulta la base de datos (evita un `IN ()` inválido).
+- Si falta `users.json` o es inválido, la pantalla de login lo indica en vez de fallar en silencio.
+
+## Tests
+
+```bash
+python -m pytest -q
+```
+
+Cubren el hash y la verificación de contraseñas, el rechazo de URLs no `https` y el caso de usuario sin instalaciones. No necesitan base de datos ni pantalla.
 
 ## Limitaciones
 
 - El esquema de la base de datos de reetiquetado no se incluye; la herramienta espera una vista de casos pendientes y una tabla de casos hechos.
+- `main.py` es un único archivo de ~3.500 líneas; falta dividirlo en módulos y cubrir la interfaz con tests.
+- Contiene dos variantes de `_diff_review_boxes`; la activa es la última definida y la otra se conserva como `_diff_review_boxes_alt` hasta decidir cuál es la correcta.
 - Los nombres y ejemplos son ficticios.

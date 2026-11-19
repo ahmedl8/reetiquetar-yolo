@@ -71,6 +71,9 @@ def get_pending_relabel(cfg: dict, instalaciones: list[str],
     del usuario, y para cada fila localiza en tour_json el sector y la
     imagen exactos que hay que descargar.
     """
+    if not instalaciones:
+        # `IN ()` es un error de sintaxis SQL: sin instalaciones no hay casos.
+        return []
     placeholders = ",".join(["%s"] * len(instalaciones))
     sql = (
         f"SELECT id_ai, instalacion, sector, clase_yolo, clase_sugerida, "

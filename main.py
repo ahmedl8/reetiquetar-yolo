@@ -8,9 +8,11 @@ Opcional:   pip install imageio-ffmpeg   (para contexto de vídeo)
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-import json, os, shutil, threading, time, queue, ftplib, tempfile
+import json, os, shutil, threading, time, queue, ftplib
 from pathlib import Path
 from PIL import Image, ImageTk
+
+from security_utils import check_user_password, require_https
 
 try:
     import imageio_ffmpeg
@@ -18,23 +20,14 @@ try:
 except ImportError:
     IMAGEIO_AVAILABLE = False
 
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
+import importlib.util
+CV2_AVAILABLE = importlib.util.find_spec("cv2") is not None   # opcional
 
 try:
     import boto3
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
-
-try:
-    import cav_relabel
-    CAV_RELABEL_AVAILABLE = True
-except ImportError:
-    CAV_RELABEL_AVAILABLE = False
 
 try:
     import cav_relabel
@@ -62,6 +55,11 @@ CAV_DB_NAME = os.getenv("CAV_DB_NAME", "cav")
 
 FTP_HOST = os.getenv("FTP_HOST", "")
 FTP_PORT = int(os.getenv("FTP_PORT", "21"))
+# FTPS (FTP sobre TLS) por defecto. FTP_INSECURE=1 solo para servidores de
+# pruebas que no lo soporten: usuario y contraseña viajarían en claro.
+FTP_INSECURE = os.getenv("FTP_INSECURE", "0") == "1"
+# Solo para migrar: acepta el campo antiguo "password" en texto plano.
+ALLOW_PLAINTEXT_USERS = os.getenv("ALLOW_PLAINTEXT_USERS", "0") == "1"
 
 
 def _load_user_config() -> dict:
@@ -70,8 +68,15 @@ def _load_user_config() -> dict:
     path = _pl_mod.Path(os.getenv("USERS_FILE", _pl_mod.Path(__file__).with_name("users.json")))
     try:
         users = _json_mod.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        print(f"[config] No se pudo leer {path}. Copia users.example.json a users.json.")
+    except FileNotFoundError:
+        print(f"[config] No existe {path}. Copia users.example.json a users.json "
+              f"y genera los hashes con: python security_utils.py")
+        return {}
+    except ValueError as exc:
+        print(f"[config] {path} no es un JSON válido: {exc}")
+        return {}
+    if not isinstance(users, dict):
+        print(f"[config] {path} debe ser un objeto {{usuario: configuración}}.")
         return {}
     for cfg in users.values():
         cfg.update({
@@ -151,9 +156,15 @@ def save_yolo_labels(label_path, boxes, img_w, img_h):
 # ── FTP helper ──────────────────────────────────────────────────────────────
 
 def _make_ftp(cfg) -> ftplib.FTP:
-    ftp = ftplib.FTP()
-    ftp.connect(FTP_HOST, FTP_PORT, timeout=20)
-    ftp.login(cfg["ftp_user"], cfg["ftp_pass"])
+    if FTP_INSECURE:
+        ftp = ftplib.FTP()
+        ftp.connect(FTP_HOST, FTP_PORT, timeout=20)
+        ftp.login(cfg["ftp_user"], cfg["ftp_pass"])
+    else:
+        ftp = ftplib.FTP_TLS()
+        ftp.connect(FTP_HOST, FTP_PORT, timeout=20)
+        ftp.login(cfg["ftp_user"], cfg["ftp_pass"])
+        ftp.prot_p()          # cifra también el canal de datos
     ftp.set_pasv(True)
     return ftp
 
@@ -469,7 +480,10 @@ class LoginDialog(tk.Toplevel):
         username = self._user_entry.get().strip().lower()
         password = self._pass_entry.get().strip()
         cfg = USER_CONFIG.get(username)
-        if cfg and cfg.get("password") == password:
+        if not USER_CONFIG:
+            self._error_var.set("❌  No hay usuarios configurados (falta users.json).")
+            return
+        if check_user_password(cfg, password, ALLOW_PLAINTEXT_USERS):
             try:
                 min_conf = float(self._conf_var.get().replace(",", "."))
                 min_conf = max(0.0, min(1.0, min_conf))
@@ -2056,7 +2070,10 @@ en cuanto haces una acción nueva."""
             matches[bi] = (ai, iou)
         return matches, used_after
 
-    def _diff_review_boxes(self, before, after, action):
+    # NOTA: variante alternativa NO USADA. Python se queda con la última
+    # definición de `_diff_review_boxes` (más abajo), que sombreaba a esta.
+    # Se conserva con otro nombre hasta decidir cuál de las dos es la correcta.
+    def _diff_review_boxes_alt(self, before, after, action):
         """
         Única fuente de verdad del conteo. Compara SIEMPRE before (predicción
         original) vs after (estado del canvas en el momento de la acción —
@@ -3148,7 +3165,7 @@ en cuanto haces una acción nueva."""
             self._video_status_text,text="⏳ Verificando enlace…"))
         try:
             import urllib.request as _ur
-            _url = video_url or ""
+            _url = require_https(video_url or "")
             if 'x-amz-signature' in _url.lower():
                 _req = _ur.Request(_url, headers={"Range": "bytes=0-0"})
                 _ur.urlopen(_req, timeout=8)
